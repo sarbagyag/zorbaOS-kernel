@@ -1,16 +1,37 @@
 ORG 0x7c00
 BITS 16
+
 CODE_SEG equ gdt_code - gdt_start
 DATA_SEG equ gdt_data - gdt_start
 
-_start:
-    jmp short start
-    nop
- 
- times 33 db 0
+jmp short start
+nop
+
+; FAT16 Header (BIOS Parameter Block) -- every field size matters
+OEMIdentifier     db 'ZORBAOS '     ; exactly 8 bytes
+BytesPerSector    dw 0x200
+SectorsPerCluster db 0x80
+ReservedSectors   dw 200
+FATCopies         db 0x02
+RootDirEntries    dw 0x40
+NumSectors        dw 0x00
+MediaType         db 0xF8
+SectorsPerFat     dw 0x100
+SectorsPerTrack   dw 0x20
+NumberOfHeads     dw 0x40
+HiddenSectors     dd 0x00
+SectorsBig        dd 0x773594
+
+; Extended BPB (DOS 4.0)
+DriveNumber       db 0x80
+WinNTBit          db 0x00
+Signature         db 0x29
+VolumeID          dd 0xD105
+VolumeIDString    db 'ZORBAOS BOO'  ; exactly 11 bytes
+SystemIDString    db 'FAT16   '     ; exactly 8 bytes
 
 start:
-jmp 0:step2 ; makes our code segment 0x7c0
+    jmp 0:step2 ; makes our code segment 0x0
 
 step2:
     cli  ; Clear Interrupts
@@ -19,11 +40,11 @@ step2:
     mov es, ax
     mov ss, ax
     mov sp, 0x7c00
-    sti ; Enables Interrupts 
+    sti ; Enables Interrupts
 
 .load_protected:
     cli
-    lgdt[gdt_descriptor]
+    lgdt [gdt_descriptor]
     mov eax, cr0
     or eax, 0x1
     mov cr0, eax
@@ -42,7 +63,7 @@ gdt_code:           ; CS should point to this
     dw 0            ; Base first 0-15 bits
     db 0            ; Base 16-23 bits
     db 0x9a         ; Access Byte
-    db 11001111b;   ; High 4 bit flags and the low 4 bit flags
+    db 11001111b    ; High 4 bit flags and the low 4 bit flags
     db 0            ; Base 24-31
 
 ; offset 0x10
@@ -51,8 +72,8 @@ gdt_data:           ; DS, SS, ES, FS, GS
     dw 0            ; Base first 0-15 bits
     db 0            ; Base 16-23 bits
     db 0x92         ; Access Byte
-    db 11001111b;   ; High 4 bit flags and the low 4 bit flags
-    db 0            ; Base 24-31 
+    db 11001111b    ; High 4 bit flags and the low 4 bit flags
+    db 0            ; Base 24-31
 
 gdt_end:
 
@@ -61,64 +82,59 @@ gdt_descriptor:
     dd gdt_start
 
 [BITS 32]
-load32: 
-    mov eax, 1
-    mov ecx, 100
-    mov edi, 0x0100000
-    call ata_lba_read 
+load32:
+    mov eax, 1          ; start LBA (sector after the boot sector)
+    mov ecx, 100        ; sectors to read (keep <= 199, reserved area is 200)
+    mov edi, 0x0100000  ; destination
+    call ata_lba_read
     jmp CODE_SEG:0x0100000
 
 ata_lba_read:
     mov ebx, eax ; Backup the LBA
-    ; Send the highest 8-bits of the lba to the hard disk controller
+    ; Send the highest 8 bits of the LBA to the hard disk controller
     shr eax, 24
     or eax, 0xE0 ; Select the master drive
     mov dx, 0x1F6
     out dx, al
-    ;Finish sending the highest 8 bits of the lba
 
-    ;Send the total sectors to read
+    ; Send the total sectors to read
     mov eax, ecx
     mov dx, 0x1F2
     out dx, al
-     ;Finished sending the total sectors to read
-    
-    mov eax, ebx ;Restore the backup LBA
+
+    ; Send bits 0-7 of the LBA
+    mov eax, ebx
     mov dx, 0x1F3
     out dx, al
-    ;Finished sending more bits of the LDA
 
-    ; Send more bits of the LBA
+    ; Send bits 8-15 of the LBA
     mov dx, 0x1F4
-    mov eax, ebx ; Restore the backup LBA
+    mov eax, ebx
     shr eax, 8
     out dx, al
-    ;Finished sending more bits of the LBA
 
-    ;Send upper 16 bits of the LBA
+    ; Send bits 16-23 of the LBA
     mov dx, 0x1F5
-    mov eax, ebx ; Restore the backup LBA
+    mov eax, ebx
     shr eax, 16
     out dx, al
-    ;Finished sending upper 16 bits of the LBA
 
-    mov dx, 0x1f7
-    mov al, 0x20
+    mov dx, 0x1F7
+    mov al, 0x20 ; READ SECTORS
     out dx, al
 
-    ;Read all sectors into memory
-
+    ; Read all sectors into memory
 .next_sector:
     push ecx
 
-    ; Checking if we need to read
-.try_again: 
-    mov dx, 0x1f7
+    ; Check if we need to read
+.try_again:
+    mov dx, 0x1F7
     in al, dx
     test al, 8
     jz .try_again
 
-    ;We need to read 256 words at a time
+    ; We need to read 256 words at a time
     mov ecx, 256
     mov dx, 0x1F0
     rep insw
@@ -129,5 +145,3 @@ ata_lba_read:
 
 times 510 - ($ - $$) db 0
 dw 0xAA55
-
-
