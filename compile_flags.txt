@@ -1,0 +1,5 @@
+-Isrc
+-std=gnu99
+-ffreestanding
+-fno-builtin
+-m32
